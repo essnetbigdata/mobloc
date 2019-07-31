@@ -1,6 +1,6 @@
 #' Mobile location algorithms and tools
 #'
-#' CDR and signalling data contain mobile phone events logged at specific cells (antennae). This package provides algorithms and tools to translate antennae properties to gespatial distributions. Depending on the availability of the antenna properties, such as coordinates, direction, and height, different algorithms can be used.
+#' CDR and signalling data contain mobile phone events logged at specific cells. This package provides algorithms and tools to translate cell properties to gespatial distributions. Depending on the availability of the cell properties, such as coordinates, direction, and height, different algorithms can be used.
 #'
 #' @name mobloc-package
 #' @aliases mobloc
@@ -11,7 +11,7 @@ NULL
 
 #' Elevation data of Zuid-Limburg
 #'
-#' Elevation data of Zuid-Limburg, raster object of 100 x 100 meter cells
+#' Elevation data of Zuid-Limburg, a province (NUTS 2 region) of the Netherlands.. It is a raster object of 100 x 100 meter grid tiles
 #'
 #' @usage data(ZL_elevation)
 #' @name ZL_elevation
@@ -20,30 +20,27 @@ NULL
 
 #' Cellplan data for Zuid-Limburg
 #'
-#' Artificial cell plan data for Zuid-Limburg, i.e.
+#' Artificial cellplan data for Zuid-Limburg, a province (NUTS 2 region) of the Netherlands
 #'
 #' @usage data(ZL_cellplan)
 #' @name ZL_cellplan
 #' @docType data
 NULL
 
-#' Land of Zuid-Limburg
+#' Municipalities of Zuid-Limburg
 #'
-#' Land of Zuid-Limburg, which is the shape of Zuid-Limburg with large water areas removed.
+#' Municipalities of Zuid-Limburg, a province (NUTS 2 region) of the Netherlands. Source: CBS
 #'
-#' @usage data(ZL_land)
-#' @name ZL_land
+#' @usage data(ZL_muni)
+#' @name ZL_muni
 #' @docType data
 NULL
 
-#' Residential areas of Zuid-Limburg
+#' Landuse of Zuid-Limburg
 #'
-#' Residential of Zuid-Limburg, raster object of 100 x 100 meter cells, where for each cell the fraction of area is specified which is tagged as residential. Source: OpenStreetMap
+#' Landuse grouped of Zuid-Limburg, a province (NUTS 2 region) of the Netherlands. The landuse categories are groupd by: building, residential, forest, water and roads. Source: OpenStreetMap
 #'
-#' @usage data(ZL_resi)
-#' @name ZL_resi
+#' @usage data(ZL_landuse)
+#' @name ZL_landuse
 #' @docType data
 NULL
-
-
-.MOBLOC_CACHE <- new.env(FALSE, parent=globalenv())

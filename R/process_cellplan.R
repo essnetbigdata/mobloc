@@ -1,47 +1,124 @@
-#' Rasterize cellplan
+#' Process cellplan
 #'
-#' Rasterize cellplan
+#' Process cellplan. The propagation is modelled based on the physical properties of the cells. Also, the likelihood distribution is calculated, which takes the overlap of cells into account.
 #'
-#' @param cp cellplan
-#' @param cp_poly cellplan polygons
-#' @param raster raster with indices
+#' @param cp cellplan, validated with \code{\link{validate_cellplan}}
+#' @param raster raster object that contains the raster tile index numbers (e.g. created with \code{\link{create_raster}})
 #' @param elevation raster with elevation data
-#' @param param list
+#' @param param parameter list created with \code{prop_param}
+#' @param region polygon shape. If specified, only the signal strength will be calculated for raster tiles inside the polygons
 #' @importFrom stats dnorm
+#' @import parallel
+#' @import doParallel
+#' @import foreach
+#' @return a data.frame is return with the following colums: cell (cell id), rid (raster tile id), dist (distance between cell and grid tile), dBm (signal strength), s (signal dominance), pag (likelihood probability). This data.frame is required to run the interactive tool \code{\link{explore_mobloc}} and to compute the location posterior with \code{\link{calculate_mobloc}}.
+#' @example ./examples/process_cellplan.R
+#' @seealso \href{../doc/mobloc.html}{\code{vignette("mobloc")}}
 #' @export
-process_cellplan <- function(cp, cp_poly, raster, elevation, param) {
-    dist <- dBm <- antenna <- rid <- s <- NULL
+process_cellplan <- function(cp, raster, elevation, param, region = NULL) {
+    x <- y <- z <- height <- direction <- tilt <- beam_h <- beam_v <- W <- ple <- rid <- dBm <- s <- cell <- dist <- pag <- TA <- NULL
 
-    r <- brick(raster, elevation)
+    if (!is_cellplan_valid(cp)) stop("Cellplan (cp) is not valid yet. Please validate it with validate_cellplan")
 
-    shp <- cp_poly$poly
-
-    shp$x <- cp$x
-    shp$y <- cp$y
-
-    shp$z <- cp$z
-    shp$direction <- cp$direction
-    shp$tilt <- cp$tilt
-    shp$beam_h <- cp$beam_h
-    shp$beam_v <- cp$beam_v
-    shp$small <- cp$small
-    # shp <- cbind(shp, cp %>% select(height, a, tilt3, indoor)) currently not working...
-
-    #suppressWarnings(start_cluster())
+    check_raster(raster)
 
     parallel <- check_parallel()
+    if (!parallel) message("No parallel backend found, so procell_cellplan will run single threaded")
 
 
-    qres <- quandrantify(shp, r)
-
+    # precalculate mapping (needed to calculate the dB loss other directions)
     param <- attach_mapping(param)
 
-    ppr <- calculate_probabilities(qres$shps, qres$rs, param, parallel = parallel)
-    ## 67 min, 4core i5 16GB, swap-5GB
-    ## 37 min, 16 cores Xeon E5, 38 GB
 
-    # attach cell name
-    ppr$antenna <- cp$antenna[ppr$pid]
+    # select required cp variables
+    cpsel <- cp %>%
+        st_set_geometry(NULL) %>%
+        dplyr::select(x, y, z, height, direction, tilt, beam_h, beam_v, W, range, ple)
 
-    ppr %>% select(antenna, rid, dist, dBm, s, pag)
+    # determine raster specs
+    rext <- raster::extent(raster)
+    rres <- raster::xres(raster)
+
+    # select raster id numbers
+    if (!missing(region)) {
+        message("Determining which raster tiles intersect with region polygon")
+
+        rdf <- get_raster_ids(raster, region)
+        rdf$z <- elevation[][rdf$rid]
+    } else {
+        rdf <- as.data.frame(coordinates(raster))
+        rdf$rid <- raster[]
+        rdf$z <- elevation[]
+    }
+
+    message("Determining coverage area per cell")
+
+    # for each cell determine range for which signal strength is within param$sig_d_th (start at +/- range, calculate signal strength and stop when it reached sig_d_th)
+    cpsellist <- as.list(cpsel)
+    names(cpsellist$x) <- cp$cell
+    res <- do.call(mcmapply, c(list(FUN = find_raster_ids, MoreArgs = list(param = param, rext = rext, rres = rres, rids = raster[]), USE.NAMES = TRUE), cpsellist))
+
+
+    # debugging mode
+    if (FALSE) {
+        r2 <- raster(raster)
+
+        r2[][res[[52]]] <- 1
+
+        r2 <- trim(r2)
+        qtm(r2) + qtm(cp[52,])
+    }
+
+    # create data.frame for each cell of selected rids
+    res2 <- mclapply(res, function(rs) {
+        rdf[rdf$rid %in% rs, ]
+    })
+
+    # debugging mode
+    if (FALSE) {
+        r2 <- raster(raster)
+
+        r2[][res2[[132]]$rid] <- 1
+
+        r2 <- trim(r2)
+        qtm(r2) + qtm(cp[132,])
+    }
+
+    # calculate signal strength
+    message("Determine signal strength per cell for raster tiles inside coverage area")
+    df3 <- do.call(mcmapply, c(list(FUN = function(df, x, y, z, height, direction, tilt, beam_h, beam_v, W, range, ple, param) {
+        df2 <- signal_strength(cx=x, cy=y, cz=z,
+                               direction = direction,
+                               tilt = tilt,
+                               beam_h = beam_h,
+                               beam_v = beam_v,
+                               W = W,
+                               co = df[, c("x", "y", "z")],
+                               ple = ple,
+                               param = param)
+        cbind(df, as.data.frame(df2))
+    }, df = res2, MoreArgs = list(param = param), SIMPLIFY = FALSE, USE.NAMES = TRUE), as.list(cpsel)))
+
+    # attach cell name and put in one data.frame
+    message("Creating data.frame and compute pag values")
+    cells <- cp$cell
+
+    df4 <- bind_rows(df3, .id = "cell")
+
+    # select top [param$max_overlapping_cells] cells for each rid, and calculate pag
+    df5 <- df4 %>%
+        group_by(rid) %>%
+        filter(s >= param$sig_d_th) %>%
+        filter(order(s)<=param$max_overlapping_cells) %>%
+        mutate(pag = s / sum(s)) %>%
+        add_timing_advance(param = param) %>%
+        ungroup() %>%
+        dplyr::select(cell=cell, TA=TA, rid=rid, dist=dist, dBm = dBm, s = s, pag = pag) %>%
+        attach_class("mobloc_prop")
 }
+
+
+
+
+
+

@@ -122,9 +122,9 @@ attach_mapping <- function(param) {
 #     (dnorm(a, 0, sd) - dens_max) * inflate
 # }
 
-# transform dBm to signal quality (s)
-db2s <- function(dBm, dBm_mid, dBm_width = 5) {
-    scale <- (dBm - dBm_mid) / dBm_width
+# transform dBm to signal dominance (s)
+db2s <- function(dBm, midpoint, steepness) {
+    scale <- (dBm - midpoint) * steepness
     1 / (1 + exp(1)^(-scale))
 }
 
@@ -140,9 +140,9 @@ project_to_e_plane <- function(b, c, beta) {
   lambda <- ATAN2(c, abs(b))
   d <- sqrt(b^2 + c^2)
 
-  cases <- ifelse(b > 0, # in front of antenna?
+  cases <- ifelse(b > 0, # in front of cell?
                   ifelse(beta < lambda, 1, 2), # below elevation plane?
-                  ifelse(lambda + beta < 90, 3, 4)) # projected point in front of antenna (=rare case)
+                  ifelse(lambda + beta < 90, 3, 4)) # projected point in front of cell (=rare case)
 
   e <- rep(0, length.out = length(b))
 
@@ -158,22 +158,18 @@ project_to_e_plane <- function(b, c, beta) {
 
 
 signal_strength <- function(cx, cy, cz, direction, tilt, beam_h, beam_v, W, co, ple, param, enable = c("d", "h", "v")) {
-    #browser()
 
-  # cat(param$azim_min3dB, "\n")
-  # cat(param$elev_min3dB, "\n")
-
-    #plot(co$x, co$y, pch=21)
-    #points(cx,cy, col="red", pch=16)
+    # tilt was assumed to be negative?
+    # tilt is now positive
 
     r <- sqrt((co$x - cx)^2 + (co$y - cy)^2 + (co$z - cz)^2)
     rxy <- sqrt((co$x - cx)^2 + (co$y - cy)^2)
     #rbeta <- dbeta(r/param$r_max, param$shape_1, param$shape_2) + param$const
 
     if ("d" %in% enable) {
-        dBm <- distance2dB(r, ple, W)
+        dBm <- distance2dB(pmax(r, 0.01), ple, W)
     } else{
-        dBm <- rep(param$dBm_mid + param$dBm_width, length(r))
+        dBm <- rep(param$midpoint + 1/param$steepness, length(r))
     }
 
     if ("h" %in% enable && !any(is.na(direction)) && !any(is.na(beam_h))) {
@@ -189,7 +185,7 @@ signal_strength <- function(cx, cy, cz, direction, tilt, beam_h, beam_v, W, co, 
         a <- SIN(azim) * rxy
         b <- COS(azim) * rxy
 
-        e <- project_to_e_plane(b, cz - co$z, -tilt)
+        e <- project_to_e_plane(b, cz - co$z, tilt)
         azim2 <- ATAN2(a, e)
 
         sd <- find_sd(beam_width = beam_h, db_back = param$azim_dB_back, mapping = param$azim_mapping) #param$azim_min3dB
@@ -198,7 +194,7 @@ signal_strength <- function(cx, cy, cz, direction, tilt, beam_h, beam_v, W, co, 
 
     if ("v" %in% enable && !any(is.na(tilt))) {
         gamma_elev <- ATAN2(cz - co$z, sqrt((co$x-cx)^2 + (co$y-cy)^2))
-        elev <- (gamma_elev + tilt) %% 360
+        elev <- (gamma_elev - tilt) %% 360
         elev[elev > 180] <- elev[elev > 180] - 360
         elev[elev < -180] <- elev[elev < -180] + 360
 
@@ -206,8 +202,8 @@ signal_strength <- function(cx, cy, cz, direction, tilt, beam_h, beam_v, W, co, 
         dBm <- dBm + norm_dBloss(elev, db_back = param$elev_dB_back, sd = sd)
     }
 
-    s <- db2s(dBm, dBm_mid = param$dBm_mid, dBm_width = param$dBm_width)
+    s <- db2s(dBm, midpoint = param$midpoint, steepness = param$steepness)
 
     #list(lh = lh, dists = r, dBm = azim2) # plot projected angles
-    list(s = s, dists = r, dBm = dBm)
+    list(s = s, dist = r, dBm = dBm)
 }
